@@ -1,25 +1,27 @@
+import os
 from flask import Flask
-from threading import Thimportread
+from threading import Thread
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 from google import genai
 
 # Flask server for UptimeRobot 24/7 hosting
-app = Flask('')
+app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "Bot is running!"
 
 def run_flask():
-    app.run(host='0.0.0.0', port=8080)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run_flask)
     t.start()
 
-# --- CONFIGURATION FOR BUYERS ---
-ADMIN_USER_IDS = [int(os.getenv("ADMIN_TELEGRAM_ID", "0"))] 
+# --- CONFIGURATION ---
+ADMIN_USER_IDS = [int(os.getenv("ADMIN_TELEGRAM_ID", "0"))]
 DAILY_LIMIT = 10
 PAYMENT_LINK = os.getenv("PAYMENT_LINK", "https://razorpay.me/@your_link_here")
 
@@ -39,39 +41,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await update.message.reply_text(response.text)
         except Exception as e:
-            print(f"Error: {e}")
-            await update.message.reply_text("An error occurred with the AI model.")
+            await update.message.reply_text(f"Error: {e}")
         return
 
-    # Freemium User Logic
-    current_count = user_message_counts.get(user_id, 0)
+    # Regular Freemium Logic
+    today = str(update.message.date.date())
+    if user_id not in user_message_counts:
+        user_message_counts[user_id] = {"date": today, "count": 0}
 
-    if current_count >= DAILY_LIMIT:
-        limit_message = (
-            f"⚠️ You've reached your daily limit of {DAILY_LIMIT} messages.\n\n"
-            f"To get unlimited access, please upgrade:\n{PAYMENT_LINK}"
+    if user_message_counts[user_id]["date"] != today:
+        user_message_counts[user_id]["date"] = today
+        user_message_counts[user_id]["count"] = 0
+
+    if user_message_counts[user_id]["count"] >= DAILY_LIMIT:
+        await update.message.reply_text(
+            f"⚠️ Aapki aaj ki limit (10 free messages) khatam ho chuki hai!\n\n"
+            f"Unlimited access ke liye yahan pay karein:\n{PAYMENT_LINK}\n\n"
+            f"Payment karne ke baad Admin ko screenshot bhejein."
         )
-        await update.message.reply_text(limit_message)
         return
 
-    user_message_counts[user_id] = current_count + 1
-    remaining = DAILY_LIMIT - user_message_counts[user_id]
+    user_message_counts[user_id]["count"] += 1
+    remaining = DAILY_LIMIT - user_message_counts[user_id]["count"]
 
     try:
         response = gemini_client.models.generate_content(
             model='gemini-2.5-flash',
             contents=user_message
         )
-        reply_text = f"{response.text}\n\n📊 Remaining messages today: {remaining}/{DAILY_LIMIT}"
-        await update.message.reply_text(reply_text)
+        await update.message.reply_text(
+            f"{response.text}\n\n💬 (Aaj ke bache hue free messages: {remaining})"
+        )
     except Exception as e:
-        print(f"Error: {e}")
-        await update.message.reply_text("An error occurred with the AI model.")
+        await update.message.reply_text(f"Error: {e}")
 
-def main():
+if __name__ == '__main__':
     keep_alive()
-    TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    ap
-
-
+    
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    application = ApplicationBuilder().token(TOKEN).build()
+    
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    
+    print("Bot is starting polling...")
+    application.run_polling()
+    
