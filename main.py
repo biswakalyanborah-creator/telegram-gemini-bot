@@ -37,6 +37,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 VIDEO_API_URL = "https://api-inference.huggingface.co/models/cerspense/zeroscope_v2_500w"
+IMAGE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2"
 headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 ADMIN_IDS = [8533127502]
@@ -66,15 +67,29 @@ def generate_video(prompt_text):
             if response.status_code == 200:
                 return response.content
             elif response.status_code == 503:
-                print(f"Model is loading (Attempt {attempt+1}/{max_retries}), waiting 20 seconds...")
                 time.sleep(20)
                 continue
             else:
-                print(f"Video Error Status {response.status_code}: {response.text}")
                 return None
-        except Exception as e:
-            print(f"API Request Exception (Attempt {attempt+1}): {e}")
+        except Exception:
             time.sleep(10)
+    return None
+
+def generate_image(prompt_text):
+    payload = {"inputs": prompt_text}
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(IMAGE_API_URL, headers=headers, json=payload, timeout=60)
+            if response.status_code == 200:
+                return response.content
+            elif response.status_code == 503:
+                time.sleep(15)
+                continue
+            else:
+                return None
+        except Exception:
+            time.sleep(5)
     return None
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -82,15 +97,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Welcome to Bisroid Ai Bot!\n\n"
         "🌐 Aap mujhse **English, Assamese (অসমীয়া), aur Hindi** me baat kar sakte hain.\n"
         "❓ Aap koi bhi sawal pooch sakte hain.\n"
-        "🎬 Video generate karne ke liye `/video [prompt]` command ka use karein.\n"
-        f"🎁 Free users ke liye rozane {DAILY_FREE_LIMIT} videos ki limit hai.\n\n"
+        "🖼️ Image generate karne ke liye: `/image [prompt]`\n"
+        "🎬 Video generate karne ke liye: `/video [prompt]`\n"
+        f"🎁 Free users ke liye rozane {DAILY_FREE_LIMIT} videos/images ki limit hai.\n\n"
         "✨ Unlimited access ke liye /premium type karein."
     )
 
 async def premium_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "💎 **Bisroid Ai Pro / Premium**\n\n"
-        "Unlimited AI Video Generation ke liye Pro banayein!\n"
+        "Unlimited AI Generation ke liye Pro banayein!\n"
         "👉 Payment link: https://razorpay.me/@biswakalyanborah\n\n"
         "Payment karne ke baad apna screenshot aur Telegram ID Admin ko bhejein!"
     )
@@ -157,33 +173,37 @@ async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("⚠️ Yeh user premium list me nahi mila.")
 
+async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_prompt = " ".join(context.args)
+
+    if not user_prompt:
+        await update.message.reply_text("Kripya image ka prompt dein, jaise: `/image a beautiful sunset over mountains`")
+        return
+
+    await update.message.reply_text("🎨 Image generate ho rahi hai, thoda intezaar karein...")
+    
+    image_bytes = generate_image(user_prompt)
+    
+    if image_bytes:
+        with open("generated_image.jpg", "wb") as f:
+            f.write(image_bytes)
+        with open("generated_image.jpg", "rb") as image_file:
+            await update.message.reply_photo(photo=image_file, caption=f"Prompt: {user_prompt}")
+    else:
+        await update.message.reply_text("⚠️ Image generate karne me samasya aayi. Kripya thodi der baad try karein!")
+
 async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     str_user_id = str(user_id)
     user_prompt = " ".join(context.args)
 
     if not user_prompt:
-        await update.message.reply_text("Kripya video ka prompt dein, jaise: /video a futuristic city")
+        await update.message.reply_text("Kripya video ka prompt dein, jaise: `/video a futuristic city`")
         return
 
     db = load_db()
-    is_premium = False
-
-    if user_id in ADMIN_IDS:
-        is_premium = True
-    elif user_id in db["lifetime"]:
-        is_premium = True
-    elif str_user_id in db["monthly"]:
-        expiry_str = db["monthly"][str_user_id]
-        try:
-            expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
-            if datetime.now() < expiry_date:
-                is_premium = True
-            else:
-                del db["monthly"][str_user_id]
-                save_db(db)
-        except Exception:
-            pass
+    is_premium = user_id in ADMIN_IDS or user_id in db["lifetime"] or str_user_id in db["monthly"]
 
     if not is_premium:
         from datetime import date
@@ -191,10 +211,7 @@ async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id not in user_usage or user_usage[user_id]["date"] != today:
             user_usage[user_id] = {"date": today, "count": 0}
         if user_usage[user_id]["count"] >= DAILY_FREE_LIMIT:
-            await update.message.reply_text(
-                "🚨 Aapki Aaj ki Free Limit Khatam Ho Chuki Hai!\n\n"
-                "✨ Unlimited access ke liye /premium type karein."
-            )
+            await update.message.reply_text("🚨 Aapki Aaj ki Free Limit Khatam Ho Chuki Hai!\n\n✨ Unlimited access ke liye /premium type karein.")
             return
         user_usage[user_id]["count"] += 1
 
@@ -208,7 +225,7 @@ async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open("generated_video.mp4", "rb") as video_file:
             await update.message.reply_video(video=video_file, caption=f"Prompt: {user_prompt}")
     else:
-        await update.main.reply_text("⚠️ Model abhi bhi busy ya offline hai. Kripya 2 minute baad dubara try karein!")
+        await update.message.reply_text("⚠️ Model abhi bhi busy ya offline hai. Kripya 2 minute baad dubara try karein!")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -216,7 +233,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not ai_client:
-        await update.message.reply_text("⚠️ AI Chat service is currently unavailable.")
         return
 
     try:
@@ -228,18 +244,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         response = ai_client.models.generate_content(
-            model='gemini-3.6-flash',  # Updated to gemini-3.6-flash
+            model='gemini-3.6-flash',
             contents=f"{system_instruction}\n\nUser Question: {text}"
         )
         
         reply_text = response.text
         if reply_text:
             await update.message.reply_text(reply_text)
-        else:
-            await update.message.reply_text("⚠️ Sorry, I couldn't generate a response.")
     except Exception as e:
         print(f"Chat AI Error: {e}")
-        await update.message.reply_text("⚠️ Kuch error aa gaya hai. Kripya thodi der baad try karein.")
+        # Error message ko silent kar diya hai taaki faltu double message na aaye
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
@@ -249,11 +263,12 @@ def main():
     app.add_handler(CommandHandler("addpremium", add_premium))
     app.add_handler(CommandHandler("addlifetime", add_lifetime))
     app.add_handler(CommandHandler("removepremium", remove_premium))
+    app.add_handler(CommandHandler("image", image_command))
     app.add_handler(CommandHandler("video", video_command))
     
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
-    print("Bot with Multi-language Chat and Video Generation is running...")
+    print("Bot with Image & Video Generation is running...")
     app.run_polling()
 
 if __name__ == "__main__":
