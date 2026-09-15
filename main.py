@@ -1,159 +1,74 @@
 import os
-from flask import Flask
-from threading import Thread
+import requests
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
-from google import genai
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+# Agar aapke code me Gemini/Google AI ki library hai toh woh yahan import hogi
+# import google.generativeai as genai
 
-# Flask server for UptimeRobot 24/7 hosting
-app = Flask(__name__)
+# ================= CONFIGURATION =================
+# Apne Telegram Bot ka token yahan dalein (ya environment variable se lein)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "Aapka_Telegram_Bot_Token")
 
-@app.route('/')
-def home():
-    return "Bot is running with Pro Features!"
+# Hugging Face Access Token jo abhi aapne banaya hai
+HF_TOKEN = "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"
+VIDEO_API_URL = "https://api-inference.huggingface.co/models/cerspense/zeroscope_v2_500w"
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
-def keep_alive():
-    t = Thread(target=run_flask)
-    t.start()
-
-# --- CONFIGURATION & DATABASES ---
-ADMIN_USER_IDS = [int(os.environ.get("ADMIN_TELEGRAM_ID", "0"))]
-DAILY_LIMIT = 5  # Free trial limit
-PAYMENT_LINK = os.environ.get("PAYMENT_LINK", "https://razorpay.me/@your_link_here")
-
-user_data = {}  # Stores usage counts, referral counts, and pro status
-gemini_client = genai.Client()
-
-async def send_long_message(update: Update, text: str):
-    """Bade messages ko 4000 characters ke tukdo me split karke bhejta hai"""
-    max_length = 4000
-    for i in range(0, len(text), max_length):
-        await update.message.reply_text(text[i:i + max_length])
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_message = update.message.text or update.message.caption or ""
-    today = str(update.message.date.date())
-
-    # Initialize user profile
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "date": today, 
-            "count": 0, 
-            "is_pro": False, 
-            "bonus_messages": 0
-        }
-
-    # Reset daily limits on a new day
-    if user_data[user_id]["date"] != today:
-        user_data[user_id]["date"] = today
-        user_data[user_id]["count"] = 0
-
-    # Admin Bypass & Special Commands Handler
-    if user_id in ADMIN_USER_IDS:
-        if user_message.startswith("/activate "):
-            try:
-                target_id = int(user_message.split(" ")[1])
-                if target_id in user_data:
-                    user_data[target_id]["is_pro"] = True
-                    await update.message.reply_text(f"✅ Success! User {target_id} is now upgraded to PRO.")
-                else:
-                    await update.message.reply_text("❌ User database me nahi mila.")
-            except Exception as e:
-                await update.message.reply_text(f"Format error: /activate <user_id>")
-            return
-
-    # User Commands
-    if user_message == "/start":
-        welcome_text = (
-            "🤖 **Welcome to Ultimate Gemini AI Bot!**\n\n"
-            f"🎁 Free Trial: **{DAILY_LIMIT} messages/day**\n"
-            "⚡ Features: Text & Image Analysis, Lightning fast responses.\n\n"
-            "🔥 **Want Unlimited Access?**\n"
-            f"Get Pro Plan for just ₹99/month here:\n{PAYMENT_LINK}\n\n"
-            "💡 *After payment, send your screenshot to the Admin for instant activation, or type /status to check your quota.*"
-        )
-        await update.message.reply_text(welcome_text, parse_mode="Markdown")
-        return
-
-    if user_message == "/status":
-        u = user_data[user_id]
-        status_type = "👑 PRO (Unlimited)" if u["is_pro"] else "🆓 Free Tier"
-        remaining = max(0, DAILY_LIMIT + u["bonus_messages"] - u["count"])
-        await update.message.reply_text(
-            f"📊 **Your Account Status**\n\n"
-            f"Plan: {status_type}\n"
-            f"Messages left today: {remaining}\n"
-            f"Referral Bonus Messages: {u['bonus_messages']}"
-        )
-        return
-
-    # Check Pro Status or Limits
-    is_pro = user_data[user_id]["is_pro"]
-    total_allowed = DAILY_LIMIT + user_data[user_id]["bonus_messages"]
-
-    if not is_pro and user_data[user_id]["count"] >= total_allowed:
-        paywall_text = (
-            "🚨 **Aapki Aaj ki Free Limit Khatam Ho Chuki Hai!**\n\n"
-            "✨ *Non-stop AI power ke liye abhi Pro banayein:*\n"
-            f"👉 [Click Here to Pay & Unlock Pro]({PAYMENT_LINK})\n\n"
-            "📸 *Payment ke baad screenshot aur apni Telegram ID Admin ko bhejein taaki turant activation ho sake!*\n"
-            "💬 Type `/status` to check details."
-        )
-        await update.message.reply_text(paywall_text, parse_mode="Markdown")
-        return
-
-    # Increment count for normal users
-    if not is_pro:
-        user_data[user_id]["count"] += 1
-        remaining = total_allowed - user_data[user_id]["count"]
+# ================= VIDEO GENERATION FUNCTION =================
+def generate_video(prompt_text):
+    payload = {"inputs": prompt_text}
+    response = requests.post(VIDEO_API_URL, headers=headers, json=payload)
+    
+    if response.status_code == 200:
+        return response.content
     else:
-        remaining = "Unlimited 👑"
+        print("Video Error:", response.text)
+        return None
 
-    # Multimodal handling (Image + Text) or Normal Text
-    try:
-        if update.message.photo:
-            # Handle Image analysis for Pro/Free users
-            photo_file = await update.message.photo[-1].get_file()
-            photo_bytes = await photo_file.download_as_bytearray()
-            
-            prompt_text = user_message if user_message else "Describe this image in detail."
-            
-            response = gemini_client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=[
-                    prompt_text,
-                    {"mime_type": "image/jpeg", "data": bytes(photo_bytes)}
-                ]
-            )
-        else:
-            # Standard Text Generation
-            response = gemini_client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=user_message
-            )
+# ================= TELEGRAM COMMANDS =================
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Hello! Main hoon **Bisroid Ai Bot**.\n\n"
+        "Aap mujhse chat kar sakte hain aur ab free video bhi generate kar sakte hain!\n"
+        "Commands:\n"
+        "• /video [text prompt] - Video banane ke liye"
+    )
 
-        reply_output = f"{response.text}\n\n💬 (Quota left: {remaining})"
-        await send_long_message(update, reply_output)
+async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_prompt = " ".join(context.args)
+    if not user_prompt:
+        await update.message.reply_text("Kripya video ka prompt dein, jaise: /video a cat playing guitar")
+        return
 
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Error occurred with AI model: {e}")
-
-if __name__ == '__main__':
-    keep_alive()
+    await update.message.reply_text("🎬 Video generate ho raha hai, isme 1-2 minute ka samay lag sakta hai...")
     
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    application = ApplicationBuilder().token(TOKEN).build()
+    video_bytes = generate_video(user_prompt)
     
-    # Proper Handlers for Commands and Messages
-    application.add_handler(CommandHandler("start", handle_message))
-    application.add_handler(CommandHandler("status", handle_message))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_message))
+    if video_bytes:
+        with open("generated_video.mp4", "wb") as f:
+            f.write(video_bytes)
+        
+        with open("generated_video.mp4", "rb") as video_file:
+            await update.message.reply_video(video=video_file, caption=f"Prompt: {user_prompt}")
+    else:
+        await update.message.reply_text("Maaf kijiye, free video model abhi busy hai ya load ho raha hai. Thodi der baad try karein.")
+
+# (Agar aapka purana chat handler ya doosri functions hain, unhe aap yahan niche rakh sakte hain)
+
+# ================= MAIN FUNCTION =================
+def main():
+    # Application builder setup
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Handlers add karna
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("video", video_command))
     
-    print("Bot with Pro features is starting...")
-    application.run_polling()
+    # Bot ko start karna (Polling)
+    print("Bot is running...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
+    
