@@ -81,7 +81,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to Bisroid Ai Bot!\n\n"
         "🌐 Aap mujhse **English, Assamese (অসমীয়া), aur Hindi** me baat kar sakte hain.\n"
-        "❓ Aap koi bhi sawal pooch sakte hain (jaise general knowledge, coding, writing, etc.).\n"
+        "❓ Aap koi bhi sawal pooch sakte hain.\n"
         "🎬 Video generate karne ke liye `/video [prompt]` command ka use karein.\n"
         f"🎁 Free users ke liye rozane {DAILY_FREE_LIMIT} videos ki limit hai.\n\n"
         "✨ Unlimited access ke liye /premium type karein."
@@ -198,7 +198,7 @@ async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         user_usage[user_id]["count"] += 1
 
-    await update.message.reply_text("🎬 Video generate ho raha hai, model load hone me 2-3 minute lag sakte hain... Kripya intezaار karein!")
+    await update.message.reply_text("🎬 Video generate ho raha hai, model load hone me 2-3 minute lag sakte hain... Kripya intezaar karein!")
     
     video_bytes = generate_video(user_prompt)
     
@@ -208,7 +208,7 @@ async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open("generated_video.mp4", "rb") as video_file:
             await update.message.reply_video(video=video_file, caption=f"Prompt: {user_prompt}")
     else:
-        await update.message.reply_text("⚠️ Model abhi bhi busy ya offline hai. Kripya 2 minute baad dubara try karein!")
+        await update.main.reply_text("⚠️ Model abhi bhi busy ya offline hai. Kripya 2 minute baad dubara try karein!")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -228,7 +228,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         response = ai_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.6-flash',  # Updated to gemini-3.6-flash
             contents=f"{system_instruction}\n\nUser Question: {text}"
         )
         
@@ -258,4 +258,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-                
+    
