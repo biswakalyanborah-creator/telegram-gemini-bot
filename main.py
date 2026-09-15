@@ -1,6 +1,5 @@
-import os
 from flask import Flask
-from threading import Thread
+from threading import Thimportread
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 from google import genai
@@ -74,4 +73,5 @@ def main():
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     ap
-  
+
+
