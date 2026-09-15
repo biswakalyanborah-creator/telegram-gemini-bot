@@ -2,7 +2,7 @@ import os
 from flask import Flask
 from threading import Thread
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from google import genai
 
 # Flask server for UptimeRobot 24/7 hosting
@@ -149,10 +149,11 @@ if __name__ == '__main__':
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     application = ApplicationBuilder().token(TOKEN).build()
     
-    # Handle both text and photo inputs
-    application.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & (~filters.COMMAND), handle_message))
-    application.add_handler(MessageHandler(filters.COMMAND, handle_message))
+    # Proper Handlers for Commands and Messages
+    application.add_handler(CommandHandler("start", handle_message))
+    application.add_handler(CommandHandler("status", handle_message))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    application.add_handler(MessageHandler(filters.PHOTO, handle_message))
     
     print("Bot with Pro features is starting...")
     application.run_polling()
-                    
