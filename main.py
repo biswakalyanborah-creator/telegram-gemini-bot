@@ -2,12 +2,35 @@ import os
 import json
 from datetime import datetime, timedelta
 import requests
+import threading
+import http.server
+import socketserver
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+# ===== RENDER PORT FIX (DUMMY WEB SERVER) =====
+PORT = int(os.getenv("PORT", 10000))
+
+class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bisroid Ai Bot is running and alive!")
+
+def run_web_server():
+    try:
+        with socketserver.TCPServer(("", PORT), HealthCheckHandler) as httpd:
+            print(f"Web server running on port {PORT}")
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"Web server error: {e}")
+
+# Web server ko background thread me start karna taaki Render khush rahe
+threading.Thread(target=run_web_server, daemon=True).start()
+
 # ===== CONFIGURATION =====
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-HF_TOKEN = os.getenv("HF_TOKEN")  # Ab token Render ke Environment Variable se aayega
+HF_TOKEN = os.getenv("HF_TOKEN")
 VIDEO_API_URL = "https://api-inference.huggingface.co/models/cerspense/zeroscope_v2_500w"
 
 headers = {"Authorization": f"Bearer {HF_TOKEN}"}
@@ -171,7 +194,7 @@ async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open("generated_video.mp4", "rb") as video_file:
             await update.message.reply_video(video=video_file, caption=f"Prompt: {user_prompt}")
     else:
-        await update.message.reply_text("⚠️ Hugging Face model abhi loading state me hai ya token expire ho gaya hai. Kripya Render environment variables check karein!")
+        await update.message.reply_text("⚠️ Hugging Face model abhi loading state me hai ya busy hai. Kripya thodi der baad try karein!")
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
@@ -187,3 +210,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+                      
