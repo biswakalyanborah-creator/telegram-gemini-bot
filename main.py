@@ -2,11 +2,13 @@ import os
 import json
 from datetime import datetime, timedelta
 import requests
+import time
 import threading
 import http.server
 import socketserver
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from google import genai
 
 # ===== RENDER PORT FIX (DUMMY WEB SERVER) =====
 PORT = int(os.getenv("PORT", 10000))
@@ -25,17 +27,19 @@ def run_web_server():
     except Exception as e:
         print(f"Web server error: {e}")
 
-# Web server ko background thread me start karna taaki Render khush rahe
 threading.Thread(target=run_web_server, daemon=True).start()
 
 # ===== CONFIGURATION =====
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
-VIDEO_API_URL = "https://api-inference.huggingface.co/models/cerspense/zeroscope_v2_500w"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+VIDEO_API_URL = "https://api-inference.huggingface.co/models/cerspense/zeroscope_v2_500w"
 headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
-ADMIN_IDS = [8533127502]  # Aapki Admin ID
+ADMIN_IDS = [8533127502]
 DB_FILE = "premium_users.json"
 user_usage = {}
 DAILY_FREE_LIMIT = 2
@@ -55,21 +59,31 @@ def save_db(data):
 
 def generate_video(prompt_text):
     payload = {"inputs": prompt_text}
-    try:
-        response = requests.post(VIDEO_API_URL, headers=headers, json=payload, timeout=120)
-        if response.status_code == 200:
-            return response.content
-        else:
-            print(f"Video Error Status {response.status_code}: {response.text}")
-            return None
-    except Exception as e:
-        print(f"API Request Exception: {e}")
-        return None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(VIDEO_API_URL, headers=headers, json=payload, timeout=180)
+            if response.status_code == 200:
+                return response.content
+            elif response.status_code == 503:
+                print(f"Model is loading (Attempt {attempt+1}/{max_retries}), waiting 20 seconds...")
+                time.sleep(20)
+                continue
+            else:
+                print(f"Video Error Status {response.status_code}: {response.text}")
+                return None
+        except Exception as e:
+            print(f"API Request Exception (Attempt {attempt+1}): {e}")
+            time.sleep(10)
+    return None
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to Bisroid Ai Bot!\n\n"
-        f"🎁 Free users ke liye rozane {DAILY_FREE_LIMIT} videos ki limit hai.\n"
+        "🌐 Aap mujhse **English, Assamese (অসমীয়া), aur Hindi** me baat kar sakte hain.\n"
+        "❓ Aap koi bhi sawal pooch sakte hain (jaise general knowledge, coding, writing, etc.).\n"
+        "🎬 Video generate karne ke liye `/video [prompt]` command ka use karein.\n"
+        f"🎁 Free users ke liye rozane {DAILY_FREE_LIMIT} videos ki limit hai.\n\n"
         "✨ Unlimited access ke liye /premium type karein."
     )
 
@@ -184,7 +198,7 @@ async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         user_usage[user_id]["count"] += 1
 
-    await update.message.reply_text("🎬 Video generate ho raha hai, isme 1-2 minute ka samay lag sakta hai...")
+    await update.message.reply_text("🎬 Video generate ho raha hai, model load hone me 2-3 minute lag sakte hain... Kripya intezaار karein!")
     
     video_bytes = generate_video(user_prompt)
     
@@ -194,10 +208,42 @@ async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open("generated_video.mp4", "rb") as video_file:
             await update.message.reply_video(video=video_file, caption=f"Prompt: {user_prompt}")
     else:
-        await update.message.reply_text("⚠️ Hugging Face model abhi loading state me hai ya busy hai. Kripya thodi der baad try karein!")
+        await update.message.reply_text("⚠️ Model abhi bhi busy ya offline hai. Kripya 2 minute baad dubara try karein!")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if not text or text.startswith('/'):
+        return
+
+    if not ai_client:
+        await update.message.reply_text("⚠️ AI Chat service is currently unavailable.")
+        return
+
+    try:
+        system_instruction = (
+            "You are Bisroid AI, a helpful assistant. "
+            "You can fluently converse in English, Assamese (অসমীয়া), and Hindi. "
+            "Detect the user's language and reply in the exact same language. "
+            "Answer any questions accurately and friendly."
+        )
+
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=f"{system_instruction}\n\nUser Question: {text}"
+        )
+        
+        reply_text = response.text
+        if reply_text:
+            await update.message.reply_text(reply_text)
+        else:
+            await update.message.reply_text("⚠️ Sorry, I couldn't generate a response.")
+    except Exception as e:
+        print(f"Chat AI Error: {e}")
+        await update.message.reply_text("⚠️ Kuch error aa gaya hai. Kripya thodi der baad try karein.")
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("premium", premium_command))
     app.add_handler(CommandHandler("addpremium", add_premium))
@@ -205,9 +251,11 @@ def main():
     app.add_handler(CommandHandler("removepremium", remove_premium))
     app.add_handler(CommandHandler("video", video_command))
     
-    print("Bot is running perfectly...")
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    
+    print("Bot with Multi-language Chat and Video Generation is running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-                      
+                
