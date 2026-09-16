@@ -37,7 +37,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 VIDEO_API_URL = "https://api-inference.huggingface.co/models/cerspense/zeroscope_v2_500w"
-IMAGE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2"
+# Updated to a more stable and fast image model
+IMAGE_API_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5"
 headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 ADMIN_IDS = [8533127502]
@@ -77,18 +78,21 @@ def generate_video(prompt_text):
 
 def generate_image(prompt_text):
     payload = {"inputs": prompt_text}
-    max_retries = 3
+    max_retries = 4
     for attempt in range(max_retries):
         try:
-            response = requests.post(IMAGE_API_URL, headers=headers, json=payload, timeout=60)
+            response = requests.post(IMAGE_API_URL, headers=headers, json=payload, timeout=90)
             if response.status_code == 200:
                 return response.content
             elif response.status_code == 503:
+                print(f"Image model loading, waiting... (Attempt {attempt+1})")
                 time.sleep(15)
                 continue
             else:
-                return None
-        except Exception:
+                print(f"Image API error code: {response.status_code}, response: {response.text}")
+                time.sleep(5)
+        except Exception as e:
+            print(f"Image exception: {e}")
             time.sleep(5)
     return None
 
@@ -174,7 +178,6 @@ async def remove_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Yeh user premium list me nahi mila.")
 
 async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     user_prompt = " ".join(context.args)
 
     if not user_prompt:
@@ -191,7 +194,7 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open("generated_image.jpg", "rb") as image_file:
             await update.message.reply_photo(photo=image_file, caption=f"Prompt: {user_prompt}")
     else:
-        await update.message.reply_text("⚠️ Image generate karne me samasya aayi. Kripya thodi der baad try karein!")
+        await update.message.reply_text("⚠️ Image generate karne me samasya aayi. Model abhi busy hai, kripya 1 minute baad dubara try karein!")
 
 async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -253,7 +256,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(reply_text)
     except Exception as e:
         print(f"Chat AI Error: {e}")
-        # Error message ko silent kar diya hai taaki faltu double message na aaye
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
@@ -268,9 +270,9 @@ def main():
     
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
-    print("Bot with Image & Video Generation is running...")
+    print("Bot with Stable Image & Video Generation is running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-    
+                
