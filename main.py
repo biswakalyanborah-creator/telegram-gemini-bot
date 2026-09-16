@@ -37,8 +37,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 VIDEO_API_URL = "https://api-inference.huggingface.co/models/cerspense/zeroscope_v2_500w"
-# Updated to a more stable and fast image model
-IMAGE_API_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5"
 headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 ADMIN_IDS = [8533127502]
@@ -74,26 +72,6 @@ def generate_video(prompt_text):
                 return None
         except Exception:
             time.sleep(10)
-    return None
-
-def generate_image(prompt_text):
-    payload = {"inputs": prompt_text}
-    max_retries = 4
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(IMAGE_API_URL, headers=headers, json=payload, timeout=90)
-            if response.status_code == 200:
-                return response.content
-            elif response.status_code == 503:
-                print(f"Image model loading, waiting... (Attempt {attempt+1})")
-                time.sleep(15)
-                continue
-            else:
-                print(f"Image API error code: {response.status_code}, response: {response.text}")
-                time.sleep(5)
-        except Exception as e:
-            print(f"Image exception: {e}")
-            time.sleep(5)
     return None
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,17 +162,17 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Kripya image ka prompt dein, jaise: `/image a beautiful sunset over mountains`")
         return
 
-    await update.message.reply_text("🎨 Image generate ho rahi hai, thoda intezaar karein...")
+    await update.message.reply_text("🎨 Image generate ho rahi hai...")
     
-    image_bytes = generate_image(user_prompt)
+    # Fast, free and reliable direct image URL generation
+    encoded_prompt = requests.utils.quote(user_prompt)
+    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}"
     
-    if image_bytes:
-        with open("generated_image.jpg", "wb") as f:
-            f.write(image_bytes)
-        with open("generated_image.jpg", "rb") as image_file:
-            await update.message.reply_photo(photo=image_file, caption=f"Prompt: {user_prompt}")
-    else:
-        await update.message.reply_text("⚠️ Image generate karne me samasya aayi. Model abhi busy hai, kripya 1 minute baad dubara try karein!")
+    try:
+        await update.message.reply_photo(photo=image_url, caption=f"Prompt: {user_prompt}")
+    except Exception as e:
+        print(f"Image Error: {e}")
+        await update.message.reply_text("⚠️ Image generate karne me samasya aayi. Kripya dubara try karein!")
 
 async def video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -270,9 +248,9 @@ def main():
     
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
-    print("Bot with Stable Image & Video Generation is running...")
+    print("Bot with Instant Image & Video Generation is running...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
-                
+    
