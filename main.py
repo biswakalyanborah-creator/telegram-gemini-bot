@@ -164,12 +164,21 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("🎨 Image generate ho rahi hai...")
     
-    # Fast, free and reliable direct image URL generation
-    encoded_prompt = requests.utils.quote(user_prompt)
-    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}"
-    
     try:
-        await update.message.reply_photo(photo=image_url, caption=f"Prompt: {user_prompt}")
+        encoded_prompt = requests.utils.quote(user_prompt)
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+        
+        # Download image bytes first to avoid direct URL parsing errors in telegram bot
+        img_response = requests.get(image_url, timeout=30)
+        if img_response.status_code == 200:
+            image_bytes = img_response.content
+            with open("generated_image.jpg", "wb") as f:
+                f.write(image_bytes)
+            
+            with open("generated_image.jpg", "rb") as image_file:
+                await update.message.reply_photo(photo=image_file, caption=f"Prompt: {user_prompt}")
+        else:
+            await update.message.reply_text("⚠️ Image generate karne me samasya aayi. Kripya dubara try karein!")
     except Exception as e:
         print(f"Image Error: {e}")
         await update.message.reply_text("⚠️ Image generate karne me samasya aayi. Kripya dubara try karein!")
